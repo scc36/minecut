@@ -1,0 +1,64 @@
+body {
+	background-color: #A4D0FF;
+	font: Tahoma, Verdana, Arial, sans-serif;
+	margin: 0px;
+}
+
+a {
+	color: #0088ff;
+}
+
+#header {
+	height: 32px;
+	background: #202020 url(dark_brick_wall.png);
+	color: #eeeeee;
+}
+
+#side_right {
+	position: absolute;
+	width: 200px;
+	right: 0px;
+	padding: 5px;
+	background: url(dark_brick_wall_transparent.png);
+	color: #eeeeee;
+	border: groove #202020 2px;
+}
+#status {
+	background: #202020 url(dark_brick_wall.png);
+	padding: 3px;
+}
+#map_upload {
+	margin: auto;
+	border: solid #333 1px;
+	text-align: center;
+}
+#map_upload.hover {
+	border: solid #fff 1px;
+}
+
+#box_selection {
+	margin: auto;
+	border: solid #333 1px;
+	text-align: center;
+}
+
+#block_bottom {
+	position: absolute;
+	bottom: 0px;
+	max-width: 600px;
+}
+
+#center {
+	width: auto;
+}
+
+.ui-progressbar {
+	position: relative;
+}
+.progress-label {
+	position: absolute;
+	width: 100%;
+	text-align: center;
+	top: 5px;
+	color: #ffffff;
+}

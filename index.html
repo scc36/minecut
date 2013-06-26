@@ -1,0 +1,877 @@
+<!DOCTYPE HTML>
+<html>
+<head>
+	<meta charset="utf-8"> 
+	<meta http-equiv="X-UA-Compatible" content="IE=edge,chrome=1">
+	
+	<link href="css/jquery-ui-1.10.3.custom.css" rel="stylesheet">
+	<link href="css/mine.css" rel="stylesheet">
+	
+	<script type="text/javascript" src="js/jquery-1.9.1.js" ></script>
+	<script type="text/javascript" src="js/jquery-ui-1.10.3.custom.min.js" ></script>
+	<script type="text/javascript" src="js/three.min.js"></script>
+	<script type="text/javascript" src="js/stats.min.js"></script>
+	<script type="text/javascript" src="js/MineControls.js"></script>
+	
+	<script type="text/javascript" src="js/util.js"></script>
+	<script type="text/javascript" src="js/nbt.js"></script>
+	<script type="text/javascript" src="js/deflate.js"></script>
+	<script type="text/javascript" src="js/inflate.js"></script>
+	<script type="text/javascript" src="js/DataReader.js"></script>
+	<script type="text/javascript" src="js/Region.js"></script>
+	<script type="text/javascript" src="js/Chunk.js"></script>
+	<script type="text/javascript" src="js/jshashtable-2.1.js"></script>
+	<script type="text/javascript" src="js/jshashset.js"></script>
+	<script type="text/javascript" src="js/FileSaver.js" ></script>
+	<script type="text/javascript" src="js/Blob.js" ></script>
+	<script type="text/javascript" src="js/BlobBuilder.js" ></script>
+	
+	<script type="text/javascript">
+	// Wait until the document is loaded before running any scripts
+	$(function() {
+		// JQUERY UI
+		var loadingbar = $( "#loadingbar" ),
+			loadingLabel = $( "#loadingtext" );
+		loadingbar.progressbar({
+			value: false,
+			change: function() {
+				loadingLabel.text( loadingbar.progressbar( "value" ) + "%" );
+			},
+			complete: function() {
+				loadingLabel.text( "Uploaded" );
+			}
+		});
+		
+		function updateLoad(newPercent) {
+			loadingbar.progressbar( "value", newPercent );
+		}
+		
+		$( "#helpDialog" ).dialog({
+			autoOpen: false,
+			width: 700,
+			buttons: [
+				{
+					text: "Ok",
+					click: function() {
+						$( this ).dialog( "close" );
+					}
+				}
+			]
+		});
+		// Link to open the dialog
+		$( "#helpLoad" ).button()
+						.click(function() {
+			$( "#helpDialog" ).dialog( "open" );
+			event.preventDefault();
+		});
+		$( "#helpTabs" ).tabs({
+		});
+		
+		// Dialog for uploading
+		$( "#progressDialog" ).dialog({
+			autoOpen: false,
+			width: 500,
+		});
+		var progressbar = $( "#progressbar" ),
+			progressLabel = $( "#progresstext" );
+		progressbar.progressbar({
+			value: false,
+			change: function() {
+				if (fileProcess == "rendering") {
+					progressLabel.text( "Rendering Piece: " + progressbar.progressbar( "value" ) + "%" );
+				}
+				else {
+					progressLabel.text( "Processing and Creating World: " + progressbar.progressbar( "value" ) + "%" );
+				}
+			},
+			complete: function() {
+				progressLabel.text( "Complete" );
+			}
+		});
+		
+		function updateProgress (newPercent) {
+			progressbar.progressbar( "value", newPercent );
+		}
+		
+		$( "#mouseRadio" ).buttonset();
+		$('[for=radio1]').click(function() {
+			//alert ($('input:radio[name=mouseR]:checked').val());
+			controls.setState("select");
+		});
+		$('[for=radio2]').click(function() {
+			controls.setState("pan");
+		});
+		$('[for=radio3]').click(function() {
+			controls.setState("rotate");
+		});
+		$('[for=radio4]').click(function() {
+			fileProcess = "rendering";
+			$( "#progressDialog" ).dialog( "open" );
+			buildObject();
+			controls.setState("object");
+		});
+		
+		$( "#tabs" ).tabs({
+			active: false,
+			collapsible: true
+		});
+		
+		$( ".tabs-bottom .ui-tabs-nav, .tabs-bottom .ui-tabs-nav > *" )
+			.removeClass( "ui-corner-all ui-corner-top" )
+			.addClass( "ui-corner-bottom" );
+		$( ".tabs-bottom .ui-tabs-nav" ).appendTo( ".tabs-bottom" );
+		
+		$( "#slider-range" ).slider({
+			orientation: "vertical",
+			range: true,
+			min: 0,
+			max: 255,
+			values: [ 0, 200 ],
+			slide: function( event, ui ) {
+				document.getElementById("lower_y").value = ui.values[ 0 ];
+				document.getElementById("upper_y").value = ui.values[ 1 ];
+				updateBox ();
+			}
+		});
+		
+		$( "#updateSelection" ).button()
+							.click(function () {
+			updateBox();
+		});
+		
+		$( "#makeObject" ).button()
+						.click(function() {
+		});
+		
+		$( "#downloadFile" ).button()
+						.click(function() {
+			createSTL();
+		});
+		$("#downloadFile").hide();
+		
+		// THREE.JS
+		BLOCK_SIZE = 4;
+		
+		UI_BORDER_SIZE = 40;
+		UI_WIDTH_SIDE = 200;
+		UI_HEIGHT_SIDE = 32;
+		viewWidth = window.innerWidth;// - UI_WIDTH_SIDE - UI_BORDER_SIZE;
+		viewHeight = window.innerHeight - UI_HEIGHT_SIDE - UI_BORDER_SIZE;
+		
+		var stone = new THREE.MeshLambertMaterial( { color: 0x707070 } );
+		var grass = new THREE.MeshLambertMaterial( { color: 0x7fb238 } );
+		var sand = new THREE.MeshLambertMaterial( { color: 0xf7e9a3 } );
+		var iron = new THREE.MeshLambertMaterial( { color: 0xa7a7a7 } );
+		var lava = new THREE.MeshLambertMaterial( { color: 0xff0000 } );
+		var ice = new THREE.MeshLambertMaterial( { color: 0xa0a0ff } );
+		var leaves = new THREE.MeshLambertMaterial( { color: 0x007c00 } );
+		var snow = new THREE.MeshLambertMaterial( { color: 0xffffff } );
+		var clay = new THREE.MeshLambertMaterial( { color: 0xa4a8b8 } );
+		var dirt = new THREE.MeshLambertMaterial( { color: 0xb76a2f } );
+		var water = new THREE.MeshLambertMaterial( { color: 0x4040ff } );
+		var wood = new THREE.MeshLambertMaterial( { color: 0x685332 } );
+		var defaultMat = new THREE.MeshLambertMaterial( { color: 0x111111 } );
+		
+		// Insert materials into array
+		var materialsArray = [];
+		materialsArray.push(defaultMat);
+		materialsArray.push(stone);
+		materialsArray.push(grass);
+		materialsArray.push(sand);
+		materialsArray.push(iron);
+		materialsArray.push(lava);
+		materialsArray.push(ice);
+		materialsArray.push(leaves);
+		materialsArray.push(snow);
+		materialsArray.push(clay);
+		materialsArray.push(dirt);
+		materialsArray.push(water);
+		materialsArray.push(wood);
+		
+		function getMatIndex (blockID) {
+			if (blockID === 0x01 || blockID === 0x04 || blockID === 0x07) {
+				return 1;//stone
+			} else if (blockID === 0x02 || blockID === 0x6e) {
+				return 2;//grass
+			} else if (blockID === 0x0c || blockID === 0x0d || blockID === 0x58) {
+				return 3;//sand
+			} else if (blockID === 0x65 || blockID === 0x40 || blockID === 0x29 || blockID === 0x2a) {
+				return 4;//iron
+			} else if (blockID === 0x0a || blockID === 0x0b) {
+				return 5;//lava
+			} else if (blockID === 0x4f) {
+				return 6;//ice
+			} else if (blockID === 0x12 || blockID === 0x1f) {
+				return 7;//leaves
+			} else if (blockID === 0x4e || blockID === 0x50) {
+				return 8;//snow
+			} else if (blockID === 0x52) {
+				return 9;//clay
+			} else if (blockID === 0x03 || blockID === 0x3c) {
+				return 10;//dirt
+			} else if (blockID === 0x08 || blockID === 0x09) {
+				return 11;//water
+			} else if (blockID === 0x05 || blockID === 0x11) {
+				return 12;//wood
+			} else {
+				return 0;//defaultMat
+			}
+		}
+		
+		var container, stats;
+		var camera, scene, renderer;
+		var projector;
+		var selBox, wireGround, coorText;
+		
+		var regions = {};
+		var chunkGeo = {};
+		var viewBlock;
+		var sx1, sy1, sz1, sx2, sy2, sz2;
+		
+		coord = document.getElementById('coordinates');
+		
+		init();
+		animate();
+		
+		function init() {
+			container = document.getElementById( 'container' );
+			
+			clock = new THREE.Clock();
+			scene = new THREE.Scene();
+			
+			camera = new THREE.PerspectiveCamera( 75, viewWidth / viewHeight, 1, 7000 );
+			
+			// The 2nd entry container limits controls to just that element
+			controls = new THREE.MineControls( camera , container );
+			controls.userPanSpeed = BLOCK_SIZE * 7;
+			
+			var blockOffset = 16*16*BLOCK_SIZE;
+			camera.position.set (0, 50*BLOCK_SIZE, 0);
+			
+			//camera.position.z = 1000;
+			scene.add( camera );
+			
+			var ambientLight = new THREE.AmbientLight( 0x999999 );
+			scene.add( ambientLight );
+			
+			var directionalLight = new THREE.DirectionalLight( 0xcccccc, 1 );
+			directionalLight.position.set( 1, 1, 0.5 ).normalize();
+			scene.add( directionalLight );
+			
+			// selection box
+			var selMat = new THREE.MeshLambertMaterial( { color: 0xffff00, opacity: 0.4, transparent: true} );
+			selBox = new THREE.Mesh( new THREE.CubeGeometry( BLOCK_SIZE, 1, BLOCK_SIZE ), selMat );
+			scene.add(selBox);
+			updateBox();
+			
+			// Wireframe marker  for selection - changes size based on camera height
+			var wire = new THREE.MeshLambertMaterial( { color: 0x7f7566, wireframe: true, wireframeLinewidth: 1 } );
+			wireGround = new THREE.Mesh( new THREE.PlaneGeometry( 32*16*BLOCK_SIZE, 32*16*BLOCK_SIZE, 32, 32 ), wire );
+			wireGround.rotation.x = - Math.PI / 2;
+			wireGround.position.set (blockOffset, 0, blockOffset);
+			scene.add( wireGround );
+			
+			projector = new THREE.Projector;
+			
+			renderer = new THREE.WebGLRenderer();
+			renderer.setSize( viewWidth, viewHeight );
+			container.appendChild( renderer.domElement );
+			//$("#container").append( $(renderer.domElement) );
+			
+			stats = new Stats();
+			stats.domElement.style.position = 'absolute';
+			stats.domElement.style.top = UI_HEIGHT_SIDE+'px';
+			container.appendChild( stats.domElement );
+			//$("#container").append( $(stats.domElement) );
+		}
+		
+		function animate() {
+			requestAnimationFrame( animate );
+			controls.update( clock.getDelta() );
+			updateUI ();
+			render();
+			stats.update();
+		}
+		
+		function render() {
+			renderer.render( scene, camera );
+		}
+		
+		function updateUI () {
+			var rSize = 32 * 16 * BLOCK_SIZE;
+			wireGround.position.x = Math.floor(controls.focus.x / rSize) * rSize + rSize/2;
+			wireGround.position.z = Math.floor(controls.focus.z / rSize) * rSize + rSize/2;
+			
+			var vector = controls.getMousePos();
+			projector.unprojectVector (vector, camera);
+			
+			var raycaster = new THREE.Raycaster (camera.position, vector.sub (camera.position).normalize() );
+			//var intersects = raycaster.intersectObjects (scene.children);
+			var objects  = [];
+			objects.push (wireGround);
+			// also add the chunck it's on
+			var intersects = raycaster.intersectObjects (objects);
+			if (intersects.length > 0) {
+				var nx = Math.floor (intersects[0].point.x / BLOCK_SIZE);
+				var nz = Math.floor (intersects[0].point.z / BLOCK_SIZE);
+				
+				if (controls.mouseClicked()) {
+					selectArea(nx, nz);
+				}
+			}
+			
+			coord.innerHTML = 'Focus: ' + Math.floor(controls.focus.x/BLOCK_SIZE) + ' : ' + Math.floor(controls.focus.z/BLOCK_SIZE);
+			coord.innerHTML += '<br>\nMouse: ' + nx + ' : ' + nz;
+		}
+		
+		// UI ACTIONS
+		var selectLower = true;
+		
+		function selectArea(ix, iz) {
+			if (selectLower) {
+				document.getElementById("lower_x").value = ix;
+				document.getElementById("lower_z").value = iz;
+				selectLower = false;
+			}
+			else {
+				document.getElementById("upper_x").value = ix;
+				document.getElementById("upper_z").value = iz;
+				selectLower = true;
+			}
+			updateBox ();
+		}
+		
+		function updateBox() {
+			x1 = document.getElementById("lower_x").value;// * BLOCK_SIZE,
+			y1 = document.getElementById("lower_y").value;
+			z1 = document.getElementById("lower_z").value;// * BLOCK_SIZE,
+			x2 = document.getElementById("upper_x").value;// * BLOCK_SIZE,
+			y2 = document.getElementById("upper_y").value;
+			z2 = document.getElementById("upper_z").value;// * BLOCK_SIZE,
+			
+			var box_x = (parseInt(x1) + parseInt(x2)) / 2 * BLOCK_SIZE,
+				box_y = (parseInt(y1) + parseInt(y2)) / 2,
+				box_z = (parseInt(z1) + parseInt(z2)) / 2 * BLOCK_SIZE,
+				box_wx = Math.abs(x1 - x2),
+				box_wy = Math.abs(y1 - y2),
+				box_wz = Math.abs(z1 - z2);
+			
+			if (box_wx > 0 && box_wy > 0 && box_wz > 0) {
+				selBox.position.set ( box_x, box_y, box_z );
+				selBox.scale.set ( box_wx, box_wy, box_wz );
+				//console.log ('==' + box_x + ' ' + box_y + ' ' + box_z);
+				//console.log ('WW' + box_wx + ' ' + box_wy + ' ' + box_wz);
+			}
+			
+			sx1 = Math.min(x1, x2);
+			sy1 = Math.min(y1, y2);
+			sz1 = Math.min(z1, z2);
+			sx2 = Math.max(x1, x2);
+			sy2 = Math.max(y1, y2);
+			sz2 = Math.max(z1, z2);
+		}
+		
+		// FILE UPLOAD
+		var uploadArea = document.getElementById('map_upload'),
+			uploadButton = document.getElementById('files'),
+			state = document.getElementById('status');
+			
+		var fileProcess = "reading";
+		
+		// Check for required File API support.
+		if (window.File && window.FileReader && window.FileList && window.Blob) {
+			state.className = 'pass';
+			state.innerHTML = 'Drag a file within box to upload';
+		}
+		else {
+			state.className = 'fail';
+		}
+		
+		// Consider changing to JQUERY
+		uploadArea.addEventListener('dragover', handleDragOver, false);
+		uploadArea.addEventListener('dragend', handleDragEnd, false);
+		uploadArea.addEventListener('drop', handleFileSelect, false);
+		uploadButton.addEventListener('change', handleFileSelect, false);
+		
+		function handleDragOver(event) {
+			this.className = 'hover';
+			
+			event.stopPropagation();
+			event.preventDefault();
+			event.dataTransfer.dropEffect = 'move'; // Consider making 'copy'
+		}
+		
+		function handleDragEnd(event) {
+			this.className = '';
+		}
+		
+		function renderChunks(rx, rz, cx) {
+			r = regions[[rx, rz]];
+			for (var cz = 0; cz < 32; cz++) {
+				var mesh;
+				
+				// if chunkGeo [[]]
+				//scene.remove( object );
+				//renderer.deallocateObject()
+				
+				var c = r.getChunk(cx,cz);
+				if (c !== null && c !== undefined) {
+					// Load chunk into cache
+					c.load();
+					
+					var geometry = new THREE.PlaneGeometry(BLOCK_SIZE, BLOCK_SIZE);
+					var material = new THREE.MeshBasicMaterial();
+					var mergedGeo = new THREE.Geometry();
+					var built = {};
+					blockNum = 0;
+					
+					// Skip over repeats on the y-axis
+					for (var cy = 15; cy >= 0 && blockNum < 256; cy--) {
+						var s = c.sections[cy];
+						if (s !== undefined && s !== null) {
+							var blocks = s.Blocks;
+							for (var y = 15; y >= 0; y--) {
+								for (var x = 0; x < 16; x++) {
+									for (var z = 0; z < 16; z++) {
+										var blockIndex =  ((y * 16 + z) * 16 + x);
+										var block = blocks[blockIndex];
+										
+										if (block === 0x00) {
+											//air
+										} else {
+											if (built[[x, z]] === undefined) {
+												var mesh = new THREE.Mesh( geometry );
+												
+												mesh.position.x = x*BLOCK_SIZE + 16*cx*BLOCK_SIZE + rx * 32 * 16 * BLOCK_SIZE;
+												mesh.position.y = y + 16*cy;
+												mesh.position.z = z*BLOCK_SIZE + 16*cz*BLOCK_SIZE + rz * 32 * 16 * BLOCK_SIZE;
+												mesh.rotation.x = Math.PI*3/2;
+												
+												THREE.GeometryUtils.setMaterialIndex( mesh.geometry, getMatIndex(block) );
+												THREE.GeometryUtils.merge(mergedGeo, mesh);
+												blockNum += 1;
+												built[[x, z]] = true;
+											}
+										}
+									}
+								}
+							}
+						}
+					}
+					
+					if (blockNum > 0) {
+						
+						mergedGeo.computeFaceNormals();
+						var group = new THREE.Mesh( mergedGeo, new THREE.MeshFaceMaterial( materialsArray ) );
+						group.matrixAutoUpdate = false;
+						group.updateMatrix();
+						scene.add (group);
+					}
+				}
+			}
+			
+			if (cx < 32) {
+				cx += 1;
+				updatePercent = 100 * (cx * 32 + cz)/(32 * 32);
+				document.getElementById("info").innerHTML	= (updatePercent) + "% to render";
+				updateProgress (updatePercent);
+				
+				setTimeout(function(){ renderChunks (rx, rz, cx); }, 0)
+				// Consider making fully asynchronous
+			}
+			else {
+				$( "#progressDialog" ).dialog( "close" );
+			}
+		}
+		
+		function handleFileSelect(event) {
+			this.className = '';
+			
+			event.stopPropagation();
+			event.preventDefault();
+			
+			if (event.dataTransfer === undefined) {
+				var files = event.target.files;
+			}
+			else {
+				var files = event.dataTransfer.files; // FileList object(s)
+			}
+			
+			var output = [];// as a test, list properties of each output
+			for (var i = 0, f; f = files[i]; i++) {
+				var re = new RegExp("\\br.(-{0,1}\\d+).(-{0,1}\\d+).mca+\\b")
+				var match = re.exec(f.name);
+				if (match === null) {
+					alert ("Invalid file uploaded");
+				}
+				var rx = parseInt(match[1]);
+				var rz = parseInt(match[2]);
+				var r = new Region(rx, rz);
+				
+				var reader = new FileReader();
+				reader.onprogress = updateLoadBar;
+				reader.readAsArrayBuffer(f);
+				
+				reader.onload = function(event) {
+					var binaryChunkData = event.target.result;
+					r.chunkOffsets = new Uint32Array(binaryChunkData, 0, 1024);
+					r.rawChunkData = new Uint8Array(binaryChunkData, 8192);
+					r.loaded = true
+					regions[[r.location.x, r.location.z]] = r;
+					fileProcess = "reading";
+					$( "#progressDialog" ).dialog( "open" );
+					
+					subLoc = new THREE.Vector3();
+					newLoc = new THREE.Vector3(r.location.x * 32 * 16 * BLOCK_SIZE, 0, r.location.z * 32 * 16 * BLOCK_SIZE);
+					subLoc.subVectors( newLoc, controls.focus );
+					camera.position.add (subLoc);
+					controls.focus.add (subLoc);
+					
+					renderChunks(r.location.x, r.location.z, 0);
+				}
+				
+				reader.onerror = function(event) {
+					console.log("cannot open region file");
+					console.log(event);
+				};
+				
+				output.push('<li><strong>', escape(f.name), '</strong> (', f.type || 'n/a', ') - ',
+							f.size, ' bytes, last modified: ',
+							f.lastModifiedDate ? f.lastModifiedDate.toLocaleDateString() : 'n/a', ' - ', 
+							'</li>');
+			}
+			document.getElementById('list').innerHTML = '<ul>' + output.join('') + '</ul>';
+		}
+		
+		function updateLoadBar(event) {
+			if (event.lengthComputable) {
+				var percentLoaded = Math.round((event.loaded / event.total) * 100);
+				updateLoad (percentLoaded);
+			}
+		}
+		
+		// Create STL File
+		var blockObj;
+		var stlFile;
+		var numBlocks = 0;
+		
+		function buildObject () {
+			var geometry = new THREE.CubeGeometry(BLOCK_SIZE, BLOCK_SIZE, BLOCK_SIZE);
+			var material = new THREE.MeshBasicMaterial();
+			var mergedGeo = new THREE.Geometry();
+			var r, rx, rz;
+			
+			// Build block based on coordinates
+			console.log("Chunk regions and model dimensions");
+			console.log(Math.floor(sx1/16) + ":" + Math.floor(sx2/16) + " || " + Math.floor(sy1/16) + ":" + Math.floor(sy2/16) + " || " + Math.floor(sz1/16) + ":" + Math.floor(sz2/16));
+			console.log(Math.round(sx2 - sx1) + ", " + Math.round(sy2 - sy1) + ", " + Math.round(sz2 - sz1));
+			numBlocks = 0;
+			
+			// Prebuild blockObj
+			blockObj = new Array(sx2 - sx1);
+			for (var i = 0; i < blockObj.length; i++) {
+				blockObj[i] = new Array(sy2 - sy1);
+				for (var j = 0; j < blockObj[i].length; j++) {
+					blockObj[i][j] = new Array(sz2 - sz1);
+				}
+			}
+			
+			for (var cy = Math.floor(sy1/16); cy < Math.floor(sy2/16) + 1; cy++) {
+				for (var cx = Math.floor(sx1/16); cx < Math.floor(sx2/16) + 1; cx++) {
+					for (var cz = Math.floor(sz1/16); cz < Math.floor(sz2/16) + 1; cz++) {
+						rx = Math.floor(cx/(32));
+						rz = Math.floor(cz/(32));
+						r = regions[[rx, rz]];
+						if (r !== null && r !== undefined) {
+							var c = r.getChunk((((cx%32)+32)%32), (((cz%32)+32)%32));
+							if (c !== null && c !== undefined) {
+								var s = c.sections[cy];
+								if (s !== undefined && s !== null) {
+									var blocks = s.Blocks;
+									for (var y = 0; y < 16; y++) {
+										for (var x = 0; x < 16; x++) {
+											for (var z = 0; z < 16; z++) {
+												if (cx * 16 + x > sx1 && cx * 16 + x < sx2 &&
+													cy * 16 + y > sy1 && cy * 16 + y < sy2 &&
+													cz * 16 + z > sz1 && cz * 16 + z < sz2) {
+													var blockIndex =  ((y * 16 + z) * 16 + x);
+													var block = blocks[blockIndex];
+													
+													if (block === 0x00) {
+														//air
+													} else {
+														blockObj[cx * 16 + x - sx1][cy * 16 + y - sy1][cz * 16 + z - sz1] = block;
+														var mesh = new THREE.Mesh( geometry );
+													
+														mesh.position.x = (x + (16*cx) - ((sx2 + sx1)/2)) * BLOCK_SIZE;
+														mesh.position.y = (y + (16*cy) - ((sy2 + sy1)/2)) * BLOCK_SIZE;
+														mesh.position.z = (z + (16*cz) - ((sz2 + sz1)/2)) * BLOCK_SIZE;
+														
+														THREE.GeometryUtils.setMaterialIndex( mesh.geometry, getMatIndex(block) );
+														THREE.GeometryUtils.merge(mergedGeo, mesh);
+														numBlocks += 1;
+													}
+												}
+											}
+										}
+									}
+								}
+							}
+						}
+					}
+				}
+				updatePercent = 100 * (cy * 16)/(16 * 16);
+				updateProgress (updatePercent);
+			}
+			
+			mergedGeo.computeFaceNormals();
+			
+			if (numBlocks > 0) {
+				if (viewBlock !== undefined) {
+					scene.remove (viewBlock);
+				}
+					
+				viewBlock = new THREE.Mesh( mergedGeo, new THREE.MeshFaceMaterial( materialsArray ) );
+				viewBlock.position.y = controls.objectViewY;
+				
+				scene.add (viewBlock);
+				
+				controls.viewBlock = viewBlock;
+				controls.setState ("object");
+				
+				console.log('Total number of blocks: ' + numBlocks);
+				$("#downloadFile").show();
+				$( "#progressDialog" ).dialog( "close" );
+			}
+			else {
+				console.log('Selection box doesn\'t contain any blocks');
+				$( "#progressDialog" ).dialog( "close" );
+			}
+		}
+		
+		function generateLoopSTL (s, v) {
+			var str_e = "    endloop\n  endfacet\n",
+				str_s1 = "  facet normal ",
+				str_s2 = "\n    outer loop\n",
+				str_v1 = "      vertex ",
+				str_v2 = "\n",
+				line = "";
+			
+			//s = [1, 2, 3]
+			//v = [1, 2, 3, 4, 5, 6, 7, 8, 9]
+			line += str_s1 + s[0] + " " + s[1] + " " + s[2] + str_s2;
+			line += str_v1 + v[0] + " " + v[1] + " " + v[2] + str_v2;
+			line += str_v1 + v[3] + " " + v[4] + " " + v[5] + str_v2;
+			line += str_v1 + v[6] + " " + v[7] + " " + v[8] + str_v2;
+			
+			line += str_e;
+			
+			return line;
+		}
+		
+		function createSTL () {
+			var output = '',
+				str_o = "solid Minecraft\n";
+			
+			// Adjust progress bar
+			output += str_o;
+			//countx = 0;
+			for (x = 0; x < blockObj.length; x++) {
+				for (y = 0; y < blockObj[x].length; y++) {
+					for (z = 0; z < blockObj[x][y].length; z++) {
+						if (blockObj[x][y][z] !== undefined) {
+							if (x === 0 || blockObj[x-1][y][z] === undefined) {
+								//f.write("".join([str_s%(-1,0,0),str_v%(x,z+1,y), str_v%(x,z,y+1),str_v%(x,z+1,y+1),str_e]))
+								//f.write("".join([str_s%(-1,0,0),str_v%(x,z+1,y), str_v%(x,z,y),str_v%(x,z,y+1),str_e]))
+								output += generateLoopSTL([-1,0,0],[x,z+1,y,x,z,y+1,x,z+1,y+1]);
+								output += generateLoopSTL([-1,0,0],[x,z+1,y,x,z,y,x,z,y+1]);
+							}
+							if (x === blockObj.length - 1 || blockObj[x+1][y][z] === undefined) {
+								//f.write("".join([str_s%(1,0,0),str_v%(x+1,z+1,y), str_v%(x+1,z+1,y+1),str_v%(x+1,z,y+1),str_e]))
+								//f.write("".join([str_s%(1,0,0),str_v%(x+1,z+1,y), str_v%(x+1,z,y+1),str_v%(x+1,z,y),str_e]))
+								output += generateLoopSTL([1,0,0],[x+1,z+1,y,x+1,z+1,y+1,x+1,z,y+1]);
+								output += generateLoopSTL([1,0,0],[x+1,z+1,y,x+1,z,y+1,x+1,z,y]);
+							}
+							if (z === 0 || blockObj[x][y][z-1] === undefined) {
+								//f.write("".join([str_s%(0,0,-1),str_v%(x,z,y), str_v%(x+1,z,y+1),str_v%(x,z,y+1),str_e]))
+								//f.write("".join([str_s%(0,0,-1),str_v%(x,z,y), str_v%(x+1,z,y),str_v%(x+1,z,y+1),str_e]))
+								output += generateLoopSTL([0,0,-1],[x,z,y,x+1,z,y+1,x,z,y+1]);
+								output += generateLoopSTL([0,0,-1],[x,z,y,x+1,z,y,x+1,z,y+1]);
+							}
+							if (z === blockObj[x][y].length - 1 || blockObj[x][y][z+1] === undefined) {
+								//f.write("".join([str_s%(0,0,1),str_v%(x,z+1,y), str_v%(x,z+1,y+1),str_v%(x+1,z+1,y+1),str_e]))
+								//f.write("".join([str_s%(0,0,1),str_v%(x,z+1,y), str_v%(x+1,z+1,y+1),str_v%(x+1,z+1,y),str_e]))
+								output += generateLoopSTL([0,0,1],[x,z+1,y,x,z+1,y+1,x+1,z+1,y+1]);
+								output += generateLoopSTL([0,0,1],[x,z+1,y,x+1,z+1,y+1,x+1,z+1,y]);
+							}
+							if (y === 0 || blockObj[x][y-1][z] === undefined) {
+								//f.write("".join([str_s%(0,-1,0),str_v%(x+1,z,y), str_v%(x,z+1,y),str_v%(x+1,z+1,y),str_e]))
+								//f.write("".join([str_s%(0,-1,0),str_v%(x+1,z,y), str_v%(x,z,y),str_v%(x,z+1,y),str_e]))
+								output += generateLoopSTL([0,-1,0],[x+1,z,y,x,z+1,y,x+1,z+1,y]);
+								output += generateLoopSTL([0,-1,0],[x+1,z,y,x,z,y,x,z+1,y]);
+							}
+							if (y === blockObj[x].length - 1 || blockObj[x][y+1][z] === undefined) {
+								//f.write("".join([str_s%(0,1,0),str_v%(x+1,z,y+1), str_v%(x+1,z+1,y+1),str_v%(x,z+1,y+1),str_e]))
+								//f.write("".join([str_s%(0,1,0),str_v%(x+1,z,y+1), str_v%(x,z+1,y+1),str_v%(x,z,y+1),str_e]))
+								output += generateLoopSTL([0,1,0],[x+1,z,y+1,x+1,z+1,y+1,x,z+1,y+1]);
+								output += generateLoopSTL([0,1,0],[x+1,z,y+1,x,z+1,y+1,x,z,y+1]);
+							}
+						}
+						else {
+							//countx += 1;
+						}
+					}
+				}
+			}
+			
+			output += "endsolid Minecraft\n";
+			stlFile = output;
+			
+			filename = document.getElementById("filename").value;
+			var blob = new Blob([output], {type: "stl/plain;charset=utf-8"});
+			saveAs(blob, filename+".stl");
+			// Also consider local storage to keep this information
+		}
+	});
+	</script>
+</head>
+<body>
+	<div id="header">
+		<b>Minecut</b> - Create a model from your Minecraft World
+	</div>
+	<div id="side_right">
+		<div id="status">File or FileReader not supported</div>
+		<div id="map_upload">
+			<small><button id="helpLoad">What should I upload?</button></small><br>
+			<div id="loadingbar"><div id="loadingtext" class="progress-label">Drag files here</div></div>
+			- OR - <input type="file" id="files" name="files[]" multiple />	
+		</div>
+		<div id="box_selection">
+			<div id="status2">Selection location</div>
+			<table>
+			<tr>
+				<th></th><th>Corner 1</th><th>Corner 2</th>
+				<td rowspan="4"><div id="slider-range" style="height: 100px;"></div></td>
+			</tr>
+			<tr>
+				<td>X</td>
+				<td><input type="text" id="lower_x" value=0 size=6></td>
+				<td><input type="text" id="upper_x" value=1 size=6></td>
+			</tr>
+			<tr>
+				<td>Y</td>
+				<td><input type="text" id="lower_y" value=0 size=6></td>
+				<td><input type="text" id="upper_y" value=1 size=6></td>
+			</tr>
+			<tr>
+				<td>Z</td>
+				<td><input type="text" id="lower_z" value=0 size=6></td>
+				<td><input type="text" id="upper_z" value=1 size=6></td>
+			</tr>
+			</table>
+			<small><button type="button" id="updateSelection" title="Updates the selection box to the above coordiantes">Update Selection</button></small>
+		</div>
+		<hr>
+		<div id="mouseRadio"><small>
+			<input type="radio" id="radio1" name="mouseR" value="select" checked="checked"><label for="radio1" title="X-Z box selection"><span class="ui-icon ui-icon-pin-s">test</span></label>
+			<input type="radio" id="radio2" name="mouseR" value="pan"><label for="radio2" title="Move camera position"><span class="ui-icon ui-icon-arrow-4"></span></label>
+			<input type="radio" id="radio3" name="mouseR" value="rotate"><label for="radio3" title="Rotate camera"><span class="ui-icon ui-icon-arrowrefresh-1-w"></span></label><br>
+			<input type="radio" id="radio4" name="mouseR" value="object"><label for="radio4" title="Create the selected Area and Generate it">Generate and View Model</label>
+		</small></div>
+		<hr>
+		Downloaded filename<br>
+		<input type="text" id="filename" value="minecut">.stl
+		<button type="button" id="downloadFile" title="Save the created object">Download STL File</button>
+	</div>
+	<div id="center">
+		<div id="container"></div>
+	</div>
+	<div id="block_bottom">
+		<div id="tabs" class="tabs-bottom">
+			<ul>
+				<li><a href="#tabs-1">Directions</a></li>
+				<li><a href="#tabs-2">Controls</a></li>
+				<li><a href="#tabs-3"><span class="ui-icon ui-icon-info"></span></a></li>
+			</ul>
+			<div class="tabs-spacer"></div>
+			<div id="tabs-1">
+				Upload minecraft file and watch it render the map
+				<img src="direction_upload.png" width=400 height=100 alt="upload minecraft file"><br>
+				Select the area you wish to turn into a model
+				<img src="direction_selection.png" width=400 height=100 alt="select area to model"><br>
+				Download the model as a STL 3D model file
+				<img src="direction_download.png" width=400 height=100 alt="save model file">
+			</div>
+			<div id="tabs-2">
+				W - S: Up and Down<br>
+				A - D: Left and Right<br>
+				R - F: Higher and Lower<br>
+				Q - E: Rotate Counterclockwise and rotate clockwise<br>
+				<br>
+				Mouse Control 1: Select the model area<br>
+				Mouse Control 2: Move view of map<br>
+				Mouse Control 3: Rotate view of map<br>
+				Mouse wheel: zoom
+			</div>
+			<div id="tabs-3">
+				<div id="coordinates">
+				</div>
+				<hr>
+				<div id="info" class="info"></div>
+				<div id="info2" class="info2"></div>
+				<hr>
+				<output id="list"></output>
+			</div>
+		</div>
+	</div>
+	
+	<!-- ui-dialog -->
+	<div id="helpDialog" title="Usage Help">
+		<div id="helpTabs">
+			<ul>
+				<li><a href="#tabs-1">What should I upload?</a></li>
+				<li><a href="#tabs-2">Where are my Minecraft files?</a></li>
+				<li><a href="#tabs-3">I don't have these files</a></li>
+			</ul>
+			<div class="tabs-spacer"></div>
+			<div id="tabs-1">
+				In web application, you would upload a Minecraft "Region" file, select a small portion of it, and generate a 3D print file you can download.
+				<br><img src="minecraft-filestruct.png" alt="save directory">
+			</div>
+			<div id="tabs-2">
+				Minecraft levels are stored in different locations depending on what operating system you use. <font color=#ff0000>[username]</font> = your desktop username
+				<table border=1>
+				<tr>
+					<th>OS</th>
+					<th>Location</th>
+					<th>Notes</th>
+				</tr>
+				<tr>
+					<td>Windows</td>
+					<td>C:\Users\<font color=#ff0000>[username]</font>\AppData\Roaming\</td>
+					<td>Enable seeing hidden folders</td>
+				</tr>
+				<tr>
+					<td>Apple</td>
+					<td>~/Library/Application Support/minecraft</td>
+					<td></td>
+				</tr>
+				<tr>
+					<td>Linux</td>
+					<td>/home/<font color=#ff0000>[username]</font>/.minecraft</td>
+					<td></td>
+				</tr>
+				</table>
+			</div>
+			<div id="tabs-3">
+				If you don't have a Minecraft region to upload. Below is a link to a sample region file you can download and try out.
+				<br><a href="r.0.0.mca">r.0.0.mca</a>
+			</div>
+		</div>
+	</div>
+	
+	<div id="progressDialog" title="Map Processing">
+		<div id="progressbar"><div id="progresstext" class="progress-label">Initial Setup</div></div>
+	</div>
+</body>
+</html>
