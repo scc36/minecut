@@ -31,7 +31,7 @@ THREE.MineControls = function ( object, domElement ) {
 	this.maxPolarAngle = Math.PI * 0.55; // radians
 	
 	this.minDistance = 0;
-	this.maxDistance = 2000;
+	this.maxDistance = 500;
 	
 	// internals
 	var scope = this;
